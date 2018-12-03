@@ -19,7 +19,7 @@ def accept_incoming_connections():
 def handle_client(client):  # Takes client socket as argument.
     """Handles a single client connection."""
 
-    global is_now_music_playing, music_queue
+    global is_now_music_playing, is_streaming_possible, music_queue
     name = client.recv(BUFSIZ).decode("utf8") # blocking.
     welcome = 'Welcome %s! If you ever want to quit, type {quit} to exit.' % name
     client.send(bytes(welcome, "utf8"))
@@ -34,73 +34,82 @@ def handle_client(client):  # Takes client socket as argument.
         if msg != bytes("{quit}", "utf8"):
             music_request_mutex.acquire()
 
-            # client request music.
-            if "MUSIC:" in str(msg):
-                url = msg.decode('utf8').replace('MUSIC: ', '')
-                print(url)
+            try:
+                # client request music.
+                if "MUSIC:" in str(msg):
+                    url = msg.decode('utf8').replace('MUSIC: ', '')
+                    print(url)
 
-                if is_now_music_playing or is:
-                    dm_thread = threading.Thread(target=download_music, args=(url,), kwargs={'client_socket': client, 'lock': lock})
-                    dm_thread.setDaemon(True)
-                    dm_thread.start()
-
-                else:
-                    print("is_now_music_playing: False",)
-                    # if music list is empty,
-                    if len(music_queue) == 0:
-                        print("music queue length 0")
-                        isDownloadComplete = threading.Condition()
-                        dm_thread = threading.Thread(target=download_music, kwargs={'url' : url, 'client_socket': client, 'cv': isDownloadComplete, 'lock': lock})
-                        sm_thread = threading.Thread(target=stream_music, kwargs={'cv': isDownloadComplete, 'url': url, 'lock': lock})
+                    if is_now_music_playing or is_streaming_possible == False:
+                        dm_thread = threading.Thread(target=download_music, args=(url,), kwargs={'client_socket': client, 'lock': lock})
                         dm_thread.setDaemon(True)
-                        sm_thread.setDaemon(True)
                         dm_thread.start()
-                        sm_thread.start()
 
-                    # if music list is not empty.
                     else:
-                        print("music queue length > 0")
-                        dm_thread = threading.Thread(target=download_music,  kwargs={'url': url,'client_socket': client, 'lock': lock})
-                        sm_thread = threading.Thread(target=stream_music, kwargs={ 'pop_first_element': True, 'lock': lock})
-                        dm_thread.setDaemon(True)
-                        sm_thread.setDaemon(True)
-                        dm_thread.start()
-                        sm_thread.start()
+                        print("is_now_music_playing: False",)
+                        # if music list is empty,
+                        if len(music_queue) == 0:
+                            print("music queue length 0")
+                            isDownloadComplete = threading.Condition()
+                            dm_thread = threading.Thread(target=download_music, kwargs={'url' : url, 'client_socket': client, 'cv': isDownloadComplete, 'lock': lock})
+                            sm_thread = threading.Thread(target=stream_music, kwargs={'cv': isDownloadComplete, 'url': url, 'lock': lock})
+                            dm_thread.setDaemon(True)
+                            sm_thread.setDaemon(True)
+                            dm_thread.start()
+                            sm_thread.start()
+                            is_streaming_possible = False
+
+                        # if music list is not empty.
+                        else:
+                            print("music queue length > 0")
+                            dm_thread = threading.Thread(target=download_music,  kwargs={'url': url,'client_socket': client, 'lock': lock})
+                            sm_thread = threading.Thread(target=stream_music, kwargs={ 'pop_first_element': True, 'lock': lock})
+                            dm_thread.setDaemon(True)
+                            sm_thread.setDaemon(True)
+                            dm_thread.start()
+                            sm_thread.start()
+                            is_streaming_possible = False
 
 
-            # if one client says "I am ready"
-            elif "MUSIC_READY" in str(msg):
-                print("MUSIC_READY라고 알려줌.")
-                clients_ready[client] = True
+                # if one client says "I am ready"
+                elif "MUSIC_READY" in str(msg):
+                    print("MUSIC_READY라고 알려줌.")
+                    clients_ready[client] = True
 
-                # if all clients ready
-                if all(clients_ready[client] == True for client in clients_ready):
-                    is_now_music_playing = True
-                    print("SERVER: 다들 준비가 되었구만")
-                    time.sleep(1)
-                    music_broadcast(b"MUSICSTREAM_ALL_CLIENTS_READY")
+                    # if all clients ready
+                    if all(clients_ready[client] == True for client in clients_ready):
+                        is_now_music_playing = True
+                        print("SERVER: 다들 준비가 되었구만")
+                        time.sleep(1)
+                        music_broadcast(b"MUSICSTREAM_ALL_CLIENTS_READY")
 
-            # if one client says "I am finished"
-            elif "MUSIC_END" in str(msg):
-                print("MUSIC_END라고 받음")
-                clients_end[client] = True
+                # if one client says "I am finished"
+                elif "MUSIC_END" in str(msg):
+                    print("MUSIC_END라고 받음")
+                    clients_end[client] = True
 
-                # if all clients finished
-                if all(clients_end[client] == True for client in clients):
-                    print("다들 음악이 끝났구만")
-                    is_now_music_playing = False
-                    init_clients_status(clients_end, False)
-                    init_clients_status(clients_ready, False)
+                    # if all clients finished
+                    if all(clients_end[client] == True for client in clients):
+                        print("다들 음악이 끝났구만")
+                        is_now_music_playing = False
+                        init_clients_status(clients_end, False)
+                        init_clients_status(clients_ready, False)
 
-                    # if music queue is not empty
-                    if len(music_queue) > 0:
-                        sm_thread = threading.Thread(target=stream_music, kwargs={ 'lock': lock, 'pop_first_element': True})
-                        sm_thread.setDaemon(True)
-                        sm_thread.start()
+                        is_streaming_possible = True
 
-            # chat message.
-            else:
-                broadcast(msg, name + ": ")
+                        # if music queue is not empty
+                        if len(music_queue) > 0:
+                            sm_thread = threading.Thread(target=stream_music, kwargs={ 'lock': lock, 'pop_first_element': True})
+                            sm_thread.setDaemon(True)
+                            sm_thread.start()
+
+                            is_streaming_possible = False
+
+                # chat message.
+                else:
+                    broadcast(msg, name + ": ")
+            finally:
+                music_request_mutex.release()
         else:
             client.send(bytes("{quit}", "utf8"))
             client.close()
@@ -212,7 +221,7 @@ addresses = {}
 # 클라이언트 끼리의 race condition 예방 및 단일 클라이언트내 thread race condition 방지를 위해 전역변수로 lock 선언.
 lock = threading.Lock()
 music_request_mutex = threading.Lock() # for prevent race condition on music request between handle_client threads.
-is_streaming_possible = False # True if streaming was not in prgress. False if wstreaming was in prgoress. Set True if all clients ended playing music.
+is_streaming_possible = True # True if streaming was not in prgress. False if wstreaming was in prgoress. Set True if all clients ended playing music.
 
 HOST = ''
 PORT = 33000
