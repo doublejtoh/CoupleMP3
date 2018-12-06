@@ -4,6 +4,7 @@ from socket import AF_INET, socket, SOCK_STREAM
 import threading
 import os
 import time
+import subprocess as subp
 
 
 def accept_incoming_connections():
@@ -144,8 +145,11 @@ def download_music(url, client_socket, lock, cv=None):
     try:
         output_filename = 'download%d' % music_idx
         music_idx = music_idx + 1
-        cmd = 'youtube-dl -o "' + output_filename + '.%(ext)s" -x --audio-format mp3 ' + url
-        exit_status = os.system(cmd)
+        cmd = 'youtube-dl -o ' + output_filename + '.%(ext)s -x --audio-format mp3 --no-playlist ' + url
+        cmd = cmd.split(' ')
+        cmd_job = subp.Popen(cmd)
+
+        exit_status = cmd_job.wait() # wait for download complete.
 
         # if download was successful, notify to stream_music.
         if exit_status == 0:
@@ -158,6 +162,7 @@ def download_music(url, client_socket, lock, cv=None):
             if cv:
                 with cv:
                     cv.notify()
+                    print("dm thread : notified")
     finally:
         lock.release()
 
@@ -168,6 +173,7 @@ def stream_music(lock, pop_first_element=False, url=None, cv=None):
     if cv:
         with cv:
             cv.wait()
+            print("wait 풀림.")
 
     lock.acquire()
 
@@ -197,7 +203,7 @@ def stream_music(lock, pop_first_element=False, url=None, cv=None):
             while d:
                 music_broadcast(d)
                 d = mp3File.read(MP3BUFSIZ)
-            time.sleep(1) # for broadcast sync. 
+            time.sleep(1) # for broadcast sync.
             print("MUSICSTREAM_END라고 알려줌.")
             music_broadcast(b"MUSICSTREAM_READ_END")
 
@@ -239,3 +245,4 @@ if __name__ == "__main__":
     ACCEPT_THREAD.start()
     ACCEPT_THREAD.join()
     SERVER.close()
+
